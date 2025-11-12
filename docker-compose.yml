@@ -68,5 +68,137 @@ services:
     entrypoint: ["/bin/sh","-lc"]
     command: ["/scripts/init.sh"]
 
+  # ========== APPLICATION SERVICES ==========
+  
+  base-generator:
+    build:
+      context: ../base-generator
+      dockerfile: Dockerfile
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8089
+      # API Keys (configure no .env ou sobrescreva aqui)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: gpt-4o-mini
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: gemini-1.5-flash
+      # Keycloak (interno)
+      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/creator-platform
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/creator-platform/protocol/openid-connect/certs
+      KEYCLOAK_CLIENT_ID: api-client
+      KEYCLOAK_CLIENT_SECRET: super-secret-123
+    ports:
+      - "8089:8089"
+    networks:
+      - default
+
+  carousel-service:
+    build:
+      context: ../carousel-service
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      # Database (interno)
+      DB_URL: jdbc:postgresql://db:5432/content_generator
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_SCHEMA: carousel
+      # Redis (interno)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Keycloak (interno para validação JWT)
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/creator-platform
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: http://keycloak:8080/realms/creator-platform/protocol/openid-connect/certs
+      KEYCLOAK_PUBLIC_ISSUER_URI: http://localhost:8081/realms/creator-platform
+      # Swagger
+      OPENAPI_ENABLED: true
+      SWAGGER_UI_ENABLED: true
+      SWAGGER_OAUTH_CLIENT_ID: swagger-ui
+      SWAGGER_OAUTH2_REDIRECT_URL: http://localhost:8080/swagger-ui/oauth2-redirect.html
+      # API Keys
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: gemini-2.5-flash
+      GEMINI_IMAGE_MODEL: imagen-4.0-fast-generate-001
+      GEMINI_ENDPOINT: https://generativelanguage.googleapis.com/v1beta/models
+      VERTEX_ENABLED: false
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_IMAGE_MODEL: gpt-image-1
+      OPENAI_IMAGE_ENDPOINT: https://api.openai.com/v1/images/generations
+      # MinIO (interno)
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_PUBLIC_ENDPOINT: http://localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: carousel
+      MINIO_REGION: us-east-1
+      MINIO_SECURE: false
+      MINIO_URL_TTL_SECONDS: 3600
+      # Cache & Logging
+      TEMPLATE_CACHE_TTL_SECONDS: 1800
+      LOG_LEVEL: INFO
+      ACTUATOR_EXPOSE: health,info,prometheus
+      ACTUATOR_HEALTH_DETAILS: when_authorized
+    ports:
+      - "8080:8080"
+    networks:
+      - default
+
+  orchestrator:
+    build:
+      context: ../orchestrator
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      base-generator:
+        condition: service_started
+      carousel-service:
+        condition: service_started
+    environment:
+      APP_NAME: orchestrator
+      SERVER_PORT: 8082
+      # Database (interno)
+      DATABASE_URL: jdbc:postgresql://db:5432/content_generator
+      DATABASE_USERNAME: postgres
+      DATABASE_PASSWORD: postgres
+      DATABASE_SCHEMA: orchestrator
+      # JPA
+      JPA_DDL_AUTO: update
+      JPA_SHOW_SQL: false
+      # URLs dos outros serviços (internos)
+      CONTENT_GENERATOR_BASE_URL: http://base-generator:8089
+      CARROUSEL_BASE_URL: http://carousel-service:8080
+      # Keycloak (interno)
+      KEYCLOAK_ISSUER_URI: http://keycloak:8080/realms/creator-platform
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/creator-platform/protocol/openid-connect/certs
+      KEYCLOAK_CLIENT_ID: api-client
+      KEYCLOAK_CLIENT_SECRET: super-secret-123
+      # Swagger
+      SPRINGDOC_API_DOCS_PATH: /v3/api-docs
+      SPRINGDOC_SWAGGER_UI_PATH: /swagger-ui.html
+      SPRINGDOC_SWAGGER_ENABLED: true
+    ports:
+      - "8082:8082"
+    networks:
+      - default
+
 volumes:
   minio-data:
+
+networks:
+  default:
+    driver: bridge
